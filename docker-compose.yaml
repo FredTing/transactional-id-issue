@@ -1,0 +1,206 @@
+---
+volumes:
+  zookeeper_volume:
+  kafka_volume:
+  schemaregistry_volume:
+
+networks:
+  issue-transactional-id:
+    driver: bridge
+
+services:
+
+  zookeeper:
+    hostname: zookeeper
+    image: ${DOCKER_REGISTRY}/confluentinc/cp-zookeeper:${CONFLUENT_PLATFORM_VERSION}
+    environment:
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+      ZOOKEEPER_LOG4J_TOOLS_ROOT_LOGLEVEL: ERROR
+      ZOOKEEPER_CLIENT_PORT: 2181
+    #      ZOOKEEPER_TICK_TIME: 2000 # default 3000
+    networks:
+      - "issue-transactional-id"
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_volume:/var/lib/zookeeper/data
+      - zookeeper_volume:/var/lib/zookeeper/log
+      - zookeeper_volume:/etc/zookeeper/secrets
+
+  kafka:
+    image: ${DOCKER_REGISTRY}/confluentinc/cp-kafka:${CONFLUENT_PLATFORM_VERSION}
+    hostname: kafka
+    environment:
+      # KAFKA_ADVERTISED_LISTENERS: comma-separated list of listeners with their host/ip and port.
+      # This is the metadata that’s passed back to clients.
+      # LISTENER_DOCKER_INTERNAL: This will make Kafka accessible from outside the Docker network (your machine) port: 9092.
+      # LISTENER_DOCKER_EXTERNAL: This will make Kafka accessible to other Docker containers by advertising it’s
+      # location on the Docker network port: 29092
+      KAFKA_LISTENERS: LISTENER_DOCKER_INTERNAL://:29092,LISTENER_DOCKER_EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka:29092,LISTENER_DOCKER_EXTERNAL://localhost:9092
+      # Key/value pairs for the security protocol to use, per listener name
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      # The same ZooKeeper port is specified here as the previous container.
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      # The KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR is set to 1 for a single-node cluster. Unless you have three or more
+      # nodes you do not need to change this from the default.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 3
+      # Whether to auto create topics when data is published for the first time to a topic
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+      KAFKA_LOG4J_TOOLS_ROOT_LOGLEVEL: ERROR
+      KAFKA_LOG4J_LOGGERS: "org.apache.zookeeper=ERROR,org.apache.kafka=ERROR,kafka=ERROR,kafka.cluster=ERROR,kafka.controller=ERROR,kafka.coordinator=ERROR,kafka.log=INFO,kafka.server=ERROR,kafka.zookeeper=ERROR,state.change.logger=ERROR"
+      KAFKA_BROKER_ID: 1
+      CONFLUENT_SUPPORT_METRICS_ENABLE: 0
+      KAFKA_CREATE_TOPICS: "input_topic:1:1,output_topic:1:1"
+    networks:
+      - "issue-transactional-id"
+    ports:
+      - "9092:9092"
+    depends_on:
+      zookeeper:
+        condition: service_started
+    volumes:
+      - kafka_volume:/var/lib/kafka/data
+      - kafka_volume:/etc/kafka/secrets
+    healthcheck:
+      test: "nc -z localhost 29092 || exit 1"
+      interval: 5s
+      timeout: 4s
+      retries: 15
+      start_period: 5s
+
+  init-kafka:
+    image: ${DOCKER_REGISTRY}/confluentinc/cp-kafka:${CONFLUENT_PLATFORM_VERSION}
+    networks:
+      - "issue-transactional-id"
+    depends_on:
+      kafka:
+        condition: service_started
+    entrypoint: ["sh", "-c", "sleep 10 && kafka-topics --create --topic input_topic --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1 && kafka-topics --create --topic output_topic --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1"]
+
+#  schema-registry:
+#    image: ${DOCKER_REGISTRY}/confluentinc/cp-schema-registry:${CONFLUENT_PLATFORM_VERSION}
+#    hostname: schema-registry
+#    restart: always
+#    environment:
+#      # Connects to the docker internal network port: 29092
+#      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:29092"
+#      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+#      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+#      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+#      SCHEMA_REGISTRY_LOG4J_TOOLS_ROOT_LOGLEVEL: ERROR
+#    networks:
+#      - "issue-transactional-id"
+#    ports:
+#      - "8081:8081"
+#    depends_on:
+#      zookeeper:
+#        condition: service_started
+#    volumes:
+#      - schemaregistry_volume:/etc/schema-registry/secrets
+#    healthcheck:
+#      test: [ "CMD", "curl", "-f", "http://schema-registry:8081/" ]
+#      interval: 30s
+#      timeout: 2s
+#      retries: 3
+#      start_period: 5s
+
+  kafka-ui:
+    image: ${DOCKER_REGISTRY}/provectuslabs/kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+#      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: "http://schema-registry:8081"
+    networks:
+      - "issue-transactional-id"
+    ports:
+      - "9000:8080"
+
+  jobmanager:
+    build:
+      context: .
+      dockerfile: flink.dockerfile
+      args:
+        FLINK_VERSION: ${FLINK_VERSION}
+        KAFKA_CONNECTOR_VERSION: ${KAFKA_CONNECTOR_VERSION}
+    image: flink-with-kafka:${FLINK_VERSION}
+    networks:
+      - "issue-transactional-id"
+    expose:
+      - "6123"
+    ports:
+      - "8091:8081"
+    command: jobmanager
+    volumes:
+      - ./flink-config.yaml:/opt/flink/conf/config.yaml:ro
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+    healthcheck:
+      test: ["CMD-SHELL", "ps -ef | grep 'org.apache.flink.runtime.entrypoint.StandaloneSessionClusterEntrypoint'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 5s
+
+  taskmanager:
+    image: flink-with-kafka:${FLINK_VERSION}
+    networks:
+      - "issue-transactional-id"
+    expose:
+      - "6121"
+      - "6122"
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    command: taskmanager
+    volumes:
+      - ./flink-config.yaml:/opt/flink/conf/config.yaml:ro
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+    healthcheck:
+      test: ["CMD-SHELL", "ps -ef | grep 'org.apache.flink.runtime.taskexecutor.TaskManagerRunner'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 5s
+
+  deploy:
+    image: curlimages/curl
+    networks:
+      - "issue-transactional-id"
+    depends_on:
+      kafka:
+        condition: service_healthy
+#      schema-registry:
+#        condition: service_healthy
+      taskmanager:
+        condition: service_healthy
+      jobmanager:
+        condition: service_healthy
+    volumes:
+      - ./flink-deploy-job.sh:/flink-deploy-job.sh
+      - ./target/transactional-id-1.0-SNAPSHOT.jar:/test-job.jar
+    entrypoint: /flink-deploy-job.sh
+
+#  sqlclient:
+#    image: flink-with-kafka:${FLINK_VERSION}
+#    networks:
+#      - "issue-transactional-id"
+#    ports:
+#      - "9080-9089:8081"
+#    depends_on:
+#      kafka:
+#        condition: service_healthy
+#      taskmanager:
+#        condition: service_healthy
+#      jobmanager:
+#        condition: service_healthy
+#    command: /opt/flink/bin/sql-client.sh
+#    environment:
+#      JOB_MANAGER_RPC_ADDRESS: jobmanager
