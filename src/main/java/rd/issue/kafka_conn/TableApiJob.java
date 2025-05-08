@@ -39,7 +39,6 @@ public class TableApiJob {
                   source STRING NOT NULL
                 ) WITH (
                   'connector' = 'kafka',
-                  'sink.transactional-id-prefix' = 'outputTbl',
                   'topic' = 'output_topic',
                   'properties.bootstrap.servers' = '${kafka.bootstrap.servers}',
                   'value.format' = 'json'
@@ -61,9 +60,8 @@ public class TableApiJob {
         var tSet = tEnv.createStatementSet();
         tSet.addInsertSql(insert1);
         tSet.addInsertSql(insert2);
-        var x = tSet.execute();
+        tSet.execute();
     }
-
 
     public static String replaceTokens(String query, Map<String, String> settings) {
         return settings.entrySet().stream()

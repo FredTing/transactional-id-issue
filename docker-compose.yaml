@@ -57,7 +57,6 @@ services:
       KAFKA_LOG4J_LOGGERS: "org.apache.zookeeper=ERROR,org.apache.kafka=ERROR,kafka=ERROR,kafka.cluster=ERROR,kafka.controller=ERROR,kafka.coordinator=ERROR,kafka.log=INFO,kafka.server=ERROR,kafka.zookeeper=ERROR,state.change.logger=ERROR"
       KAFKA_BROKER_ID: 1
       CONFLUENT_SUPPORT_METRICS_ENABLE: 0
-      KAFKA_CREATE_TOPICS: "input_topic:1:1,output_topic:1:1"
     networks:
       - "issue-transactional-id"
     ports:

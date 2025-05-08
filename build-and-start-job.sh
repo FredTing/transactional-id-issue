@@ -1,9 +1,20 @@
 #!/bin/bash
-VERSION=${1}
-mvn clean package -P flink1.20
 
-FLINK_VERSION="$(mvn help:evaluate --quiet -DforceStdout -Dexpression=flink.version)"
-KAFKA_CONNECTOR_VERSION="$(mvn help:evaluate --quiet -DforceStdout -Dexpression=flink-connector-kafka.version)"
+VERSION=${1:-2.0}
+case "${VERSION}" in
+    2.0|1.20|1.19)
+        ;;
+
+    *)
+        echo "Usage: $0 [2.0|1.20|1.19]"
+        exit 1
+        ;;
+esac
+
+mvn clean package -P"${VERSION}"
+
+FLINK_VERSION="$(mvn help:evaluate --quiet -DforceStdout -Dexpression=flink.version -P"${VERSION}")"
+KAFKA_CONNECTOR_VERSION="$(mvn help:evaluate --quiet -DforceStdout -Dexpression=flink-connector-kafka.version -P"${VERSION}")"
 
 echo "CONFLUENT_PLATFORM_VERSION=7.6.2" > .env
 echo "DOCKER_REGISTRY=docker.io" >> .env
@@ -21,3 +32,6 @@ docker compose build
 
 # Start the containers again
 docker compose up --build -d deploy init-kafka
+
+# open the Flink dashboard
+open "http://localhost:8091/#/overview"
